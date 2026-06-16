@@ -1,0 +1,24 @@
+
+
+.react-flow__node-http_request,
+.react-flow__node-parse,
+.react-flow__node-regex_extract,
+.react-flow__node-html_select,
+.react-flow__node-xpath_select,
+.react-flow__node-set_variable,
+.react-flow__node-random_data,
+.react-flow__node-list_item,
+.react-flow__node-user_agent,
+.react-flow__node-string_op,
+.react-flow__node-encode_decode,
+.react-flow__node-hash,
+.react-flow__node-crypto_aes,
+.react-flow__node-condition,
+.react-flow__node-loop,
+.react-flow__node-wait,
+.react-flow__node-output {
+  background: transparent;
+  border: none;
+  padding: 0;
+  border-radius: 0;
+}

@@ -1,0 +1,213 @@
+@import "tailwindcss";
+
+.react-flow__edgelabel-renderer {
+  z-index: 11 !important;
+}
+
+.react-flow__handle {
+  width:         var(--ax-handle-w,      22px) !important;
+  height:        var(--ax-handle-h,      9px)  !important;
+  border-radius: var(--ax-handle-radius, 4.5px) !important;
+  border:        none !important;
+}
+
+.react-flow,
+.react-flow__container,
+.react-flow__renderer,
+.react-flow__pane {
+  background: transparent !important;
+}
+
+html, body, #root                  { background-color: var(--ax-bg-0,    #0f1117) !important; }
+[class*="bg-[#0f1117]"]            { background-color: var(--ax-bg-0,    #0f1117) !important; }
+[class*="bg-[#181b23]"]            { background-color: var(--ax-bg-1,    #181b23) !important; }
+[class*="bg-[#1e2130]"]            { background-color: var(--ax-bg-2,    #1e2130) !important; }
+[class*="bg-[#0d0f14]"]            { background-color: var(--ax-bg-form, #0d0f14) !important; }
+
+[class*="border-[#181b23]"]        { border-color: var(--ax-bg-1,    #181b23) !important; }
+[class*="border-[#1e2130]"]        { border-color: var(--ax-bg-2,    #1e2130) !important; }
+
+input[type="range"],
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--ax-accent, #4338ca) !important;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--ax-accent-edge, #6366f1) 30%, transparent);
+  color: #e8e8ff;
+}
+
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--ax-accent, #4338ca) 40%, #181b23);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--ax-accent, #4338ca) 60%, #181b23);
+}
+
+.react-flow__node.selected > div {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ax-accent-edge, #6366f1) 50%, transparent) !important;
+}
+
+.react-flow__controls {
+  background: #181b23 !important;
+  border: 1px solid rgba(255,255,255,0.06) !important;
+  border-radius: 6px !important;
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4) !important;
+}
+.react-flow__controls-button {
+  background: #181b23 !important;
+  border-bottom: 1px solid rgba(255,255,255,0.05) !important;
+  fill: #6b7280 !important;
+}
+.react-flow__controls-button:hover {
+  background: #1e2130 !important;
+  fill: #d1d5db !important;
+}
+.react-flow__controls-button:last-child {
+  border-bottom: none !important;
+}
+
+.react-flow__attribution {
+  display: none !important;
+}
+
+.react-flow__edge-path {
+  stroke-width: var(--ax-edge-width, 4) !important;
+  stroke:       var(--ax-edge-color, #6366f1) !important;
+}
+
+.ax-reduce-motion *,
+.ax-reduce-motion *::before,
+.ax-reduce-motion *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
+
+.ax-no-node-anim .react-flow__node {
+  animation: none !important;
+}
+
+@keyframes ax-edge-dash {
+  to { stroke-dashoffset: -10; }
+}
+.ax-edge-flow .react-flow__edge-path {
+  stroke-dasharray: 5 !important;
+  animation: ax-edge-dash 0.5s linear infinite !important;
+}
+
+.ax-no-ctx-anim [data-ctx-menu] {
+  animation: none !important;
+}
+.ax-no-panel-anim .ax-fade-up,
+.ax-no-panel-anim .ax-slide-in {
+  animation: none !important;
+}
+
+@keyframes ax-menu-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0)    scale(1);    }
+}
+@keyframes ax-fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+@keyframes ax-slide-in {
+  from { opacity: 0; transform: translateX(8px); }
+  to   { opacity: 1; transform: translateX(0);   }
+}
+@keyframes ax-node-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+[data-ctx-menu] {
+  animation: ax-menu-in 130ms cubic-bezier(0.16, 1, 0.3, 1);
+  transform-origin: top left;
+}
+
+.react-flow__node {
+  animation: ax-node-in 220ms ease-out;
+}
+
+.ax-fade-up  { animation: ax-fade-up  180ms cubic-bezier(0.16, 1, 0.3, 1); }
+.ax-slide-in { animation: ax-slide-in 180ms cubic-bezier(0.16, 1, 0.3, 1); }
+
+.react-flow__node.selected,
+.react-flow__node:focus,
+.react-flow__node:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+*, *::before, *::after {
+    box-sizing: border-box;
+}
+
+html, body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    background-color: #0f1117;
+    color: #f1f5f9;
+    
+    overflow: hidden;
+    overscroll-behavior: none;
+}
+
+#root {
+    transform-origin: top left;
+    transform: scale(var(--page-zoom, 1));
+    width:  calc(100vw / var(--page-zoom, 1));
+    height: calc(100vh / var(--page-zoom, 1));
+    overflow: hidden;
+}
+
+body {
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto",
+    "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
+    sans-serif;
+    -webkit-font-smoothing: antialiased;
+    
+    touch-action: none;
+}
+
+*, *::before, *::after {
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+input, textarea, select, [contenteditable] {
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+.select-text, .select-text * {
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+::selection {
+    background: rgba(99, 102, 241, 0.35);
+    color: #e0e0ff;
+}
+
+::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background: #2a2d3e;
+    border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #3d4165;
+}
+::-webkit-scrollbar-corner {
+    background: transparent;
+}
