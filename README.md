@@ -1,19 +1,40 @@
-# README
+# Axiom
 
-## About
+A desktop app for building and running HTTP automation flows.
 
-This is the official Wails React-TS template.
+![screenshot](docs/screenshot.png)
 
-You can configure the project by editing `wails.json`. More information about the project settings can be found
-here: https://wails.io/docs/reference/project-config
+## Features
 
-## Live Development
+- Node-based flow editor
+- HTTP request node with TLS fingerprinting, cookie sessions, and rate limiting
+- String and regex transformation nodes
+- Dataset management for input data
+- Proxy list management with rotation
+- Job runner with real-time results table
 
-To run in live development mode, run `wails dev` in the project directory. This will run a Vite development
-server that will provide very fast hot reload of your frontend changes. If you want to develop in a browser
-and have access to your Go methods, there is also a dev server that runs on http://localhost:34115. Connect
-to this in your browser, and you can call your Go code from devtools.
+## Download
 
-## Building
+Get the latest Windows installer from the [Releases](../../releases/latest) page.
 
-To build a redistributable, production mode package, use `wails build`.
+> **Note:** Windows may show a SmartScreen warning on first launch. Click "More info" → "Run anyway" to proceed.
+
+## Building from Source
+
+**Requirements:** Go 1.25+, Node.js 20+, [Wails v2](https://wails.io)
+
+```bash
+git clone https://github.com/t4rutaru/axiom.git
+cd axiom
+wails dev
+```
+
+To build the installer:
+
+```bash
+wails build -nsis
+```
+
+## License
+
+MIT — see [LICENSE](LICENSE)
