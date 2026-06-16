@@ -396,9 +396,9 @@ function NodeShell({
   style?: React.CSSProperties;
 }) {
   return (
-    <div className={`relative bg-[#1e2130] rounded-lg p-3 min-w-[180px] max-w-[240px] text-xs shadow-lg
+    <div className={`relative bg-[#1e2130] rounded-lg p-3 w-[200px] text-xs shadow-lg
       border ${border} ${selected ? 'ring-2 ring-white/30' : ''}`} style={style}>
-      {hasInput && <Handle type="target" position={Position.Top} className="!bg-gray-500" style={{ left: '50%' }} />}
+      {hasInput && <Handle type="target" position={Position.Top} className="!bg-gray-500" />}
       <div className="flex items-center gap-1.5 mb-1.5">
         {dot    ? <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dot}`} /> : null}
         {dotColor && !dot ? <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: dotColor }} /> : null}

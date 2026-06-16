@@ -1,8 +1,17 @@
 # Axiom
 
-A desktop app for building and running HTTP automation flows.
+A desktop app for building and running HTTP automation flows. This is an app to perform requests towards a target webapp and offers a lot of tools to work with the results. It can be used for scraping and parsing.
 
-![screenshot](docs/screenshot.png)
+<table border="0">
+  <tr>
+    <td><img src="docs/1.png" alt="Bulk Run"></td>
+    <td><img src="docs/2.png" alt="Data Sets"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/3.png" alt="Flow Editor 1"></td>
+    <td><img src="docs/4.png" alt="Flow Editor 2"></td>
+  </tr>
+</table>
 
 ## Features
 
