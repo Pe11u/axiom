@@ -9,5 +9,12 @@
   "author": {
     "name": "@t4rutaru",
     "email": "t4ruta@gmail.com"
+  },
+  "info": {
+    "companyName": "t4rutaru",
+    "productName": "Axiom",
+    "productVersion": "0.1.0",
+    "copyright": "Copyright © 2025 t4rutaru",
+    "comments": "Axiom"
   }
 }
