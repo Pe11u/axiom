@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/logo.svg" width="96" alt="Axiom">
+</p>
+
 # Axiom
 
 A desktop app for building and running HTTP automation flows. This is an app to perform requests towards a target webapp and offers a lot of tools to work with the results. It can be used for scraping and parsing.
@@ -24,24 +28,39 @@ A desktop app for building and running HTTP automation flows. This is an app to 
 
 ## Download
 
-Get the latest Windows installer from the [Releases](../../releases/latest) page.
+Get the latest release from the [Releases](../../releases/latest) page.
 
-> **Note:** Windows may show a SmartScreen warning on first launch. Click "More info" → "Run anyway" to proceed.
+| Platform | File |
+|---|---|
+| Windows | `Axiom-amd64-installer.exe` |
+| macOS | `Axiom-macos.dmg` |
+| Linux | `Axiom-linux-amd64.tar.gz` |
+
+> **Windows:** SmartScreen may warn on first launch. Click "More info" → "Run anyway".  
+> **macOS:** If blocked by Gatekeeper, right-click the app → Open.  
+> **Linux:** Requires `libwebkit2gtk-4.1` and `libgtk-3`.
 
 ## Building from Source
 
 **Requirements:** Go 1.25+, Node.js 20+, [Wails v2](https://wails.io)
 
 ```bash
-git clone https://github.com/t4rutaru/axiom.git
+git clone https://github.com/Pe11u/axiom.git
 cd axiom
 wails dev
 ```
 
-To build the installer:
+To build:
 
 ```bash
+# Windows
 wails build -nsis
+
+# macOS
+wails build
+
+# Linux
+wails build -tags webkit2_41
 ```
 
 ## License
