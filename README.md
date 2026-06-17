@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/logo.svg" width="96" alt="Axiom">
+</p>
+
 # Axiom
 
 A desktop app for building and running HTTP automation flows. This is an app to perform requests towards a target webapp and offers a lot of tools to work with the results. It can be used for scraping and parsing.

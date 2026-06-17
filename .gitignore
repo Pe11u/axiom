@@ -25,3 +25,7 @@ wailsjs/
 # Env / secrets
 .env
 .env.*
+
+# Job output
+job-*.jsonl
+job-*.json
