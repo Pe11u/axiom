@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.svg" width="96" alt="Axiom">
+  <img src="docs/logo.svg" width="384" alt="Axiom">
 </p>
 
 # Axiom
