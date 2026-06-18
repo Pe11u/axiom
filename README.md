@@ -37,7 +37,7 @@ Get the latest release from the [Releases](../../releases/latest) page.
 | Linux | `Axiom-linux-amd64.tar.gz` |
 
 > **Windows:** SmartScreen may warn on first launch. Click "More info" → "Run anyway".
--# We are currently trying to obtain a digital certificate on Windows.
+<span style="font-size: 0.8em; color: gray;">We are currently trying to obtain a digital certificate on Windows.</span>
 > **macOS:** If blocked by Gatekeeper, right-click the app → Open.  
 > **Linux:** Requires `libwebkit2gtk-4.1` and `libgtk-3`.
 
