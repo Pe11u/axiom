@@ -7,10 +7,11 @@ import {
   type OnConnectStartParams,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { EventsOn } from '../../wailsjs/runtime/runtime';
+import { EventsOn, BrowserOpenURL } from '../../wailsjs/runtime/runtime';
 import {
   CreateJob, StartJob, StopJob, GetResults,
   OpenAxprojDialog, SaveAxprojDialog, ReadTextFile, WriteTextFile,
+  GetAppVersion, GetOS, PerformUpdate,
 } from '../../wailsjs/go/main/App';
 import { nodeTypes, PALETTE_CATEGORIES, DEFAULT_NODE_DATA, CUSTOM_COLORS, type RequestNodeData } from './canvas/nodeTypes';
 import { UA_PRESETS, BROWSER_LABELS } from './canvas/NodeConfigPanel';
@@ -339,6 +340,45 @@ interface LiveRun {
   status: string;
 }
 
+
+function inlineMarkdown(text: string): React.ReactNode {
+  const parts = text.split(/(\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]*\]\([^)]+\)|https?:\/\/\S+)/);
+  return (
+    <>
+      {parts.map((part, i) => {
+        if (part.startsWith('**') && part.endsWith('**'))
+          return <strong key={i} className="font-semibold text-gray-200">{part.slice(2, -2)}</strong>;
+        if (part.startsWith('*') && part.endsWith('*'))
+          return <em key={i} className="italic text-gray-300">{part.slice(1, -1)}</em>;
+        const lm = /^\[([^\]]*)\]\(([^)]+)\)$/.exec(part);
+        if (lm)
+          return <button key={i} type="button" onClick={() => BrowserOpenURL(lm[2])}
+            className="text-indigo-400 hover:text-indigo-300 underline underline-offset-2">{lm[1]}</button>;
+        if (/^https?:\/\//.test(part))
+          return <button key={i} type="button" onClick={() => BrowserOpenURL(part)}
+            className="text-indigo-400 hover:text-indigo-300 underline underline-offset-2 break-all">{part}</button>;
+        return <span key={i}>{part}</span>;
+      })}
+    </>
+  );
+}
+
+function MarkdownView({ text }: { text: string }) {
+  const lines = text.split(/\r?\n/);
+  return (
+    <div className="text-xs text-gray-300 leading-relaxed space-y-0.5">
+      {lines.map((line, i) => {
+        if (line.startsWith('### ')) return <p key={i} className="font-semibold text-gray-200 mt-2">{line.slice(4)}</p>;
+        if (line.startsWith('## '))  return <p key={i} className="font-bold text-gray-100 mt-2 text-sm">{line.slice(3)}</p>;
+        if (line.startsWith('# '))   return <p key={i} className="font-bold text-gray-100 mt-2 text-sm">{line.slice(2)}</p>;
+        if (/^[-*] /.test(line))
+          return <div key={i} className="flex gap-1.5"><span className="text-gray-600 select-none mt-px">•</span><span>{inlineMarkdown(line.slice(2))}</span></div>;
+        if (!line.trim()) return <div key={i} className="h-1.5" />;
+        return <p key={i}>{inlineMarkdown(line)}</p>;
+      })}
+    </div>
+  );
+}
 
 function CanvasInner() {
   const wrapper = useRef<HTMLDivElement>(null);
@@ -1089,6 +1129,57 @@ function CanvasInner() {
   const [runError, setRunError]          = useState('');
   const [launching, setLaunching]        = useState(false);
 
+  type UpdateAssets = { windows?: string; darwin?: string; linux?: string };
+  type UpdateInfo   = { version: string; body: string; url: string; assets: UpdateAssets };
+
+  const [updateInfo, setUpdateInfo]      = useState<UpdateInfo | null>(null);
+  const [updateChecked, setUpdateChecked]   = useState(false);
+  const [showUpdateModal, setShowUpdateModal] = useState(false);
+  const [downloading, setDownloading]        = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const current = await GetAppVersion();
+        if (cancelled || !current || current === 'dev') return;
+        const res = await fetch('https://api.github.com/repos/Pe11u/axiom/releases/latest');
+        if (!res.ok || cancelled) return;
+        const data = await res.json() as {
+          tag_name?: string; body?: string; html_url?: string;
+          assets?: { name: string; browser_download_url: string }[];
+        };
+        const latest = (data.tag_name ?? '').replace(/^v/, '');
+        if (latest && latest !== current && !cancelled) {
+          const assets: UpdateAssets = {};
+          for (const a of data.assets ?? []) {
+            if (a.name.endsWith('.exe'))    assets.windows = a.browser_download_url;
+            else if (a.name.endsWith('.dmg'))    assets.darwin  = a.browser_download_url;
+            else if (a.name.endsWith('.tar.gz')) assets.linux   = a.browser_download_url;
+          }
+          setUpdateInfo({ version: latest, body: data.body ?? '', url: data.html_url ?? '', assets });
+        }
+      } catch { }
+      if (!cancelled) setUpdateChecked(true);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  async function handleUpdate() {
+    if (!updateInfo || downloading) return;
+    setDownloading(true);
+    try {
+      const os = await GetOS();
+      const assetUrl = updateInfo.assets[os as keyof UpdateAssets];
+      if (!assetUrl) { BrowserOpenURL(updateInfo.url); return; }
+      await PerformUpdate(assetUrl);
+    } catch {
+      BrowserOpenURL(updateInfo.url);
+    } finally {
+      setDownloading(false);
+    }
+  }
+
   useEffect(() => {
     const unsub1 = EventsOn('job:progress', (ev: { jobId: string; done: number; total: number; hits: number; fails: number; avgLatency: number }) => {
       if (bulkJobIdRef.current === ev.jobId) {
@@ -1325,6 +1416,21 @@ function CanvasInner() {
                 : `Done — ${liveRun.hits} hit / ${liveRun.fails} fail`}
             </button>
           )}
+          <button
+            onClick={() => { if (updateInfo) setShowUpdateModal(true); }}
+            title={updateInfo ? `Update available: v${updateInfo.version}` : updateChecked ? 'Up to date' : 'Checking for updates...'}
+            className={`flex items-center justify-center w-7 h-7 rounded transition-colors ${
+              updateInfo
+                ? 'bg-emerald-500/20 hover:bg-emerald-500/30 cursor-pointer'
+                : 'bg-white/5 cursor-default'
+            }`}
+          >
+            <svg viewBox="0 0 512 512" className="w-3.5 h-3.5" fill="currentColor"
+              style={{ color: updateInfo ? '#6ee7b7' : '#4b5563' }}>
+              <path d="M242.956,313.537c3.442,4.534,8.073,7.034,13.044,7.034c4.971,0,9.602-2.5,13.024-7.011l94.723-119.88c3.517-4.639,4.493-9.126,2.75-12.636c-1.743-3.51-5.906-5.443-11.726-5.443h-36.26c-9.866,0-17.894-8.024-17.894-17.892V43.661c0-11.623-9.452-21.079-21.073-21.079h-47.087c-11.621,0-21.073,9.456-21.073,21.079V157.71c0,9.868-8.028,17.892-17.896,17.892h-36.26c-5.817,0-9.98,1.933-11.724,5.443c-1.743,3.509-0.767,7.997,2.77,12.659L242.956,313.537z"/>
+              <path d="M511.934,360.164l-48.042-160.14h-58.09l-28.242,50.885h36.246L444.7,359.03H67.3l30.893-108.121h36.246l-28.242-50.885h-58.09L0,360.622v103.354c0,14.03,11.413,25.442,25.441,25.442h461.118c14.028,0,25.441-11.413,25.441-25.442v-55.652L511.934,360.164z"/>
+            </svg>
+          </button>
           {isRunning
             ? <button onClick={stopRun}
                 className="text-xs px-3 py-1 rounded bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors">
@@ -1372,6 +1478,32 @@ function CanvasInner() {
               <button onClick={executeNodeDelete} disabled={!nodeDeleteReady}
                 className="px-4 py-1.5 rounded text-xs font-medium bg-red-600 hover:bg-red-500 disabled:opacity-30 disabled:cursor-not-allowed text-white transition-colors">
                 Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showUpdateModal && updateInfo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+          onMouseDown={() => setShowUpdateModal(false)}>
+          <div className="bg-[#1e2130] border border-white/10 rounded-xl shadow-2xl w-[480px] max-h-[70vh] flex flex-col"
+            onMouseDown={e => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-white/10 flex items-baseline justify-between">
+              <p className="text-sm font-semibold text-gray-100">Update Available</p>
+              <p className="text-xs text-emerald-400">v{updateInfo.version}</p>
+            </div>
+            <div className="flex-1 overflow-y-auto px-6 py-4 min-h-0">
+              <MarkdownView text={updateInfo.body || 'No release notes.'} />
+            </div>
+            <div className="px-6 py-4 border-t border-white/10 flex justify-end gap-2">
+              <button onClick={() => setShowUpdateModal(false)}
+                className="px-4 py-1.5 rounded text-xs text-gray-400 hover:text-gray-200 hover:bg-white/5 transition-colors">
+                Close
+              </button>
+              <button onClick={handleUpdate} disabled={downloading}
+                className="px-4 py-1.5 rounded text-xs font-medium bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white transition-colors min-w-[90px]">
+                {downloading ? 'Downloading...' : 'Download'}
               </button>
             </div>
           </div>

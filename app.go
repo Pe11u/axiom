@@ -3,8 +3,15 @@ package main
 import (
 	"bufio"
 	"context"
+	"fmt"
+	"io"
+	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
+	sysruntime "runtime"
 	"strings"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -118,6 +125,144 @@ func (a *App) ReadTextFile(path string) (string, error) {
 
 func (a *App) WriteTextFile(path, content string) error {
 	return os.WriteFile(path, []byte(content), 0644)
+}
+
+func (a *App) GetAppVersion() string {
+	return Version
+}
+
+func (a *App) GetOS() string {
+	return sysruntime.GOOS
+}
+
+func (a *App) PerformUpdate(downloadURL string) error {
+	resp, err := http.Get(downloadURL) // #nosec G107
+	if err != nil {
+		return fmt.Errorf("download: %w", err)
+	}
+	defer resp.Body.Close()
+
+	parts := strings.Split(downloadURL, "/")
+	fileName := parts[len(parts)-1]
+	tmpFile := filepath.Join(os.TempDir(), fileName)
+
+	f, err := os.Create(tmpFile)
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	_, err = io.Copy(f, resp.Body)
+	f.Close()
+	if err != nil {
+		return fmt.Errorf("write temp file: %w", err)
+	}
+
+	switch sysruntime.GOOS {
+	case "windows":
+		return a.performUpdateWindows(tmpFile)
+	case "darwin":
+		return a.performUpdateDarwin(tmpFile)
+	default:
+		runtime.BrowserOpenURL(a.ctx, downloadURL)
+		return nil
+	}
+}
+
+func (a *App) performUpdateWindows(installerPath string) error {
+	exePath, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	newAppPath := filepath.Join(filepath.Dir(exePath), "Axiom.exe")
+
+	script := fmt.Sprintf(`$proc = Get-Process -Id %d -ErrorAction SilentlyContinue
+if ($proc) { $proc.WaitForExit(15000) }
+Start-Process -FilePath '%s' -ArgumentList '/S' -Wait
+if (Test-Path '%s') { Start-Process '%s' }
+`, os.Getpid(), installerPath, newAppPath, newAppPath)
+
+	scriptPath := filepath.Join(os.TempDir(), "axiom-update.ps1")
+	if err := os.WriteFile(scriptPath, []byte(script), 0644); err != nil {
+		return err
+	}
+
+	cmd := exec.Command("powershell", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", scriptPath) // #nosec G204
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		runtime.Quit(a.ctx)
+	}()
+	return nil
+}
+
+func (a *App) performUpdateDarwin(dmgPath string) error {
+	exePath, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	appPath := filepath.Dir(filepath.Dir(filepath.Dir(exePath)))
+	appDir := filepath.Dir(appPath)
+
+	out, err := exec.Command("hdiutil", "attach", "-nobrowse", "-quiet", dmgPath).Output() // #nosec G204
+	if err != nil {
+		exec.Command("open", dmgPath).Start() // #nosec G204
+		runtime.Quit(a.ctx)
+		return nil
+	}
+
+	mountPoint := ""
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.Contains(line, "/Volumes/") {
+			fields := strings.Fields(line)
+			if len(fields) > 0 {
+				mountPoint = fields[len(fields)-1]
+			}
+		}
+	}
+
+	if mountPoint == "" {
+		exec.Command("open", dmgPath).Start() // #nosec G204
+		runtime.Quit(a.ctx)
+		return nil
+	}
+
+	entries, _ := os.ReadDir(mountPoint)
+	srcApp := ""
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".app") {
+			srcApp = filepath.Join(mountPoint, e.Name())
+			break
+		}
+	}
+
+	if srcApp == "" {
+		exec.Command("hdiutil", "detach", mountPoint).Run() // #nosec G204
+		exec.Command("open", dmgPath).Start()               // #nosec G204
+		runtime.Quit(a.ctx)
+		return nil
+	}
+
+	script := fmt.Sprintf(`#!/bin/bash
+while kill -0 %d 2>/dev/null; do sleep 0.1; done
+cp -rf '%s' '%s/'
+hdiutil detach '%s' -quiet 2>/dev/null
+open '%s'
+`, os.Getpid(), srcApp, appDir, mountPoint, appPath)
+
+	scriptPath := filepath.Join(os.TempDir(), "axiom-update.sh")
+	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
+		exec.Command("hdiutil", "detach", mountPoint).Run() // #nosec G204
+		return err
+	}
+
+	exec.Command("bash", scriptPath).Start() // #nosec G204
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		runtime.Quit(a.ctx)
+	}()
+	return nil
 }
 
 

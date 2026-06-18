@@ -51,22 +51,33 @@ jobs:
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
 
+      - name: Set build version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "APP_VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
+          else
+            echo "APP_VERSION=dev" >> $GITHUB_ENV
+          fi
+
       - name: Set version from tag
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          sed -i.bak "s/\"productVersion\": \"[^\"]*\"/\"productVersion\": \"$VERSION\"/" wails.json
-          rm -f wails.json.bak
+          YEAR=$(date +%Y)
+          sed -i.bak "s/\"productVersion\": \"[^\"]*\"/\"productVersion\": \"$VERSION\"/" wails.json && rm -f wails.json.bak
+          sed -i.bak "s/Copyright © [0-9]*/Copyright © $YEAR/" wails.json && rm -f wails.json.bak
 
       - name: Build (Windows)
         if: matrix.platform == 'windows'
-        run: wails build -nsis
+        shell: pwsh
+        run: wails build -nsis -ldflags "-X 'main.Version=$env:APP_VERSION'"
 
       - name: Build (macOS)
         if: matrix.platform == 'darwin'
         run: |
-          wails build
+          wails build -ldflags "-X 'main.Version=$APP_VERSION'"
           mkdir -p /tmp/axiom-dmg
           cp -r build/bin/Axiom.app /tmp/axiom-dmg/
           hdiutil create -volname "Axiom" -srcfolder /tmp/axiom-dmg -ov -format UDZO build/bin/Axiom-macos.dmg
@@ -74,7 +85,7 @@ jobs:
       - name: Build (Linux)
         if: matrix.platform == 'linux'
         run: |
-          wails build -tags webkit2_41
+          wails build -tags webkit2_41 -ldflags "-X 'main.Version=$APP_VERSION'"
           cd build/bin && tar czf Axiom-linux-amd64.tar.gz Axiom
 
       - name: Upload to GitHub Release
