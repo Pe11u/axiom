@@ -4,7 +4,10 @@
 
 # Axiom
 
-A desktop app for building and running HTTP automation flows. This is an app to perform requests towards a target webapp and offers a lot of tools to work with the results. It can be used for scraping and parsing.
+A desktop app for building and running request automation flows. This is an app to perform requests towards a target webapp and offers a lot of tools to work with the results. It can be used for bulk data scraping, data parsing, login automation and more.
+
+> [!IMPORTANT]
+> It is illegal and unacceptable to launch DoS/DDoS attacks or perform illegal access against external services or websites without permission. The developers assume no responsibility whatsoever for the illegal use of this software.
 
 <table border="0">
   <tr>
@@ -30,6 +33,9 @@ A desktop app for building and running HTTP automation flows. This is an app to 
 
 Get the latest release from the [Releases](../../releases/latest) page.
 
+> [!NOTE]
+> We are currently trying to obtain a digital certificate on Windows.
+
 | Platform | File |
 |---|---|
 | Windows | `Axiom-amd64-installer.exe` |
@@ -39,9 +45,6 @@ Get the latest release from the [Releases](../../releases/latest) page.
 > **Windows:** SmartScreen may warn on first launch. Click "More info" → "Run anyway".
 > **macOS:** If blocked by Gatekeeper, right-click the app → Open.  
 > **Linux:** Requires `libwebkit2gtk-4.1` and `libgtk-3`.
-
-> [!NOTE]
-> We are currently trying to obtain a digital certificate on Windows.
 
 ## Building from Source
 
