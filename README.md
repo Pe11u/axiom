@@ -43,7 +43,9 @@ Get the latest release from the [Releases](../../releases/latest) page.
 | Linux | `Axiom-linux-amd64.tar.gz` |
 
 > **Windows:** SmartScreen may appear. Click "More info" → "Run anyway".
-> **macOS:** If blocked by Gatekeeper, right-click the app → Open.  
+
+> **macOS:** If blocked by Gatekeeper, right-click the app → Open.
+
 > **Linux:** Requires `libwebkit2gtk-4.1` and `libgtk-3`.
 
 ## Building from Source
