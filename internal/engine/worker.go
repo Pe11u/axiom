@@ -6,21 +6,42 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
-	fhttp "github.com/bogdanfinn/fhttp"
-	tls_client "github.com/bogdanfinn/tls-client"
 	"axiom/internal/flow"
 	"axiom/internal/job"
 	"axiom/internal/output"
 	"axiom/internal/proxy"
 	tlsclient "axiom/internal/tls"
+
+	fhttp "github.com/bogdanfinn/fhttp"
+	tls_client "github.com/bogdanfinn/tls-client"
 )
 
 const maxBodySnippet = 1 << 20
 
+var workerBodyPool = sync.Pool{
+	New: func() interface{} {
+		buf := make([]byte, maxBodySnippet)
+		return &buf
+	},
+}
+
 func makeFactory(j *job.Job, pool *proxy.Pool, wr *output.Writer) WorkerFactory {
 	cfg := j.Config
+
+	var parsedGraph *flow.Graph
+	var parseGraphErr string
+	if cfg.FlowGraph != "" {
+		var g flow.Graph
+		if err := json.Unmarshal([]byte(cfg.FlowGraph), &g); err != nil {
+			parseGraphErr = "invalid flow graph: " + err.Error()
+		} else {
+			g.Init()
+			parsedGraph = &g
+		}
+	}
 
 	return func() WorkerFunc {
 		initialProxy := pickProxy(pool, cfg.ProxyMode)
@@ -59,8 +80,9 @@ func makeFactory(j *job.Job, pool *proxy.Pool, wr *output.Writer) WorkerFactory 
 			start := time.Now()
 			var r job.Result
 			if cfg.FlowGraph != "" {
-				var g flow.Graph
-				if err := json.Unmarshal([]byte(cfg.FlowGraph), &g); err == nil {
+				if parseGraphErr != "" {
+					r.Error = parseGraphErr
+				} else {
 					var initVars map[string]string
 					if cfg.SeedVarMode == "user_pass" {
 						delim := cfg.SeedVarDelim
@@ -73,15 +95,13 @@ func makeFactory(j *job.Job, pool *proxy.Pool, wr *output.Writer) WorkerFactory 
 							initVars["Pass"] = parts[1]
 						}
 					}
-					fr := flow.Run(ctx, client, &g, initVars)
+					fr := flow.Run(ctx, client, parsedGraph, initVars)
 					r.StatusCode = fr.StatusCode
 					r.BodySnippet = fr.BodySnippet
 					r.LogSteps = fr.LogSteps
 					r.CapturedVars = fr.CapturedVars
 					r.OutputBranch = fr.OutputBranch
 					r.Error = fr.Error
-				} else {
-					r.Error = "invalid flow graph: " + err.Error()
 				}
 			} else {
 				r = executeWithRetry(ctx, client, cfg, t.Target, j)
@@ -186,10 +206,12 @@ func execute(ctx context.Context, client tls_client.HttpClient, cfg *job.JobConf
 	}
 	defer resp.Body.Close()
 
-	buf := make([]byte, maxBodySnippet)
-	n, _ := io.ReadFull(resp.Body, buf)
+	bufPtr := workerBodyPool.Get().(*[]byte)
+	n, _ := io.ReadFull(resp.Body, *bufPtr)
 	_, _ = io.Copy(io.Discard, resp.Body)
-	return resp.StatusCode, string(buf[:n]), nil
+	snippet := string((*bufPtr)[:n])
+	workerBodyPool.Put(bufPtr)
+	return resp.StatusCode, snippet, nil
 }
 
 func buildLogSteps(r job.Result) []job.LogStep {
@@ -199,10 +221,10 @@ func buildLogSteps(r job.Result) []job.LogStep {
 		proxy = "direct"
 	}
 	fields := []job.LogField{
-		{Label: "url",     Value: r.Target},
-		{Label: "status",  Value: fmt.Sprintf("%d", r.StatusCode)},
+		{Label: "url", Value: r.Target},
+		{Label: "status", Value: fmt.Sprintf("%d", r.StatusCode)},
 		{Label: "latency", Value: fmt.Sprintf("%.0fms", latMs)},
-		{Label: "proxy",   Value: proxy},
+		{Label: "proxy", Value: proxy},
 	}
 	if r.BodySnippet != "" {
 		fields = append(fields, job.LogField{Label: "response body", Value: r.BodySnippet, Expandable: true})

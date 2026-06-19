@@ -11,7 +11,7 @@ import { EventsOn, BrowserOpenURL } from '../../wailsjs/runtime/runtime';
 import {
   CreateJob, StartJob, StopJob, GetResults,
   OpenAxprojDialog, SaveAxprojDialog, ReadTextFile, WriteTextFile,
-  GetAppVersion, GetOS, PerformUpdate,
+  GetAppVersion, GetOS, PerformUpdate, GetStartupFile,
 } from '../../wailsjs/go/main/App';
 import { nodeTypes, PALETTE_CATEGORIES, DEFAULT_NODE_DATA, CUSTOM_COLORS, type RequestNodeData } from './canvas/nodeTypes';
 import { UA_PRESETS, BROWSER_LABELS } from './canvas/NodeConfigPanel';
@@ -213,7 +213,8 @@ function topoSort(nodes: Node[], edges: Edge[]): Node[] {
       if (d === 0) queue.push(nxt);
     }
   }
-  for (const n of nodes) if (!order.includes(n)) order.push(n);
+  const inOrder = new Set(order.map(n => n.id));
+  for (const n of nodes) if (!inOrder.has(n.id)) order.push(n);
   return order;
 }
 
@@ -253,6 +254,7 @@ function buildAvailableVars(nodes: Node[], edges: Edge[]): VarGroup[] {
 import { NodeConfigPanel, type VarGroup } from './canvas/NodeConfigPanel';
 import { EditableList } from './EditableList';
 import { zoomIn, zoomOut, zoomReset } from '../pageZoom';
+import { idbGet, idbSet } from '../lib/idb';
 
 
 interface SavedFlow { name: string; nodes: Node[]; edges: Edge[] }
@@ -458,18 +460,14 @@ function CanvasInner() {
     catch { return DEFAULT_FLOW_SETTINGS; }
   });
   const [bulkCfg, setBulkCfg]           = useState<BulkRunConfig>(DEFAULT_BULK_RUN);
-  const [datasets, setDatasets]          = useState<DataSet[]>(() => {
-    try { return JSON.parse(localStorage.getItem('axiom:datasets') ?? '[]'); }
-    catch { return []; }
-  });
+  const [datasets, setDatasets]          = useState<DataSet[]>([]);
+  const [datasetsReady, setDatasetsReady] = useState(false);
   const [appSettings, setAppSettings]    = useState<AppSettings>(() => {
     try { return { ...DEFAULT_APP_SETTINGS, ...JSON.parse(localStorage.getItem('axiom:appSettings') ?? '{}') }; }
     catch { return DEFAULT_APP_SETTINGS; }
   });
-  const [proxyPresets, setProxyPresets]  = useState<ProxyPreset[]>(() => {
-    try { return JSON.parse(localStorage.getItem('axiom:proxyPresets') ?? '[]'); }
-    catch { return []; }
-  });
+  const [proxyPresets, setProxyPresets]  = useState<ProxyPreset[]>([]);
+  const [proxiesReady, setProxiesReady]  = useState(false);
   const [bulkJobId, setBulkJobId]       = useState<string | null>(null);
   const bulkJobIdRef                    = useRef<string | null>(null);
   useEffect(() => { bulkJobIdRef.current = bulkJobId; }, [bulkJobId]);
@@ -478,6 +476,7 @@ function CanvasInner() {
   const [bulkSearch, setBulkSearch]     = useState('');
   const [bulkPage, setBulkPage]         = useState(0);
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
+  const [paletteSearch, setPaletteSearch] = useState('');
   const [flowNames, setFlowNames]        = useState<string[]>([]);
 
   useEffect(() => {
@@ -877,9 +876,37 @@ function CanvasInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leftTab]);
 
-  useEffect(() => { localStorage.setItem('axiom:datasets',     JSON.stringify(datasets));     }, [datasets]);
-  useEffect(() => { localStorage.setItem('axiom:proxyPresets', JSON.stringify(proxyPresets)); }, [proxyPresets]);
-  useEffect(() => { localStorage.setItem('axiom:appSettings',  JSON.stringify(appSettings));  }, [appSettings]);
+  // Load large data from IndexedDB on mount (localStorage has a ~5 MB quota)
+  useEffect(() => {
+    idbGet<DataSet[]>('axiom:datasets').then(data => {
+      if (data != null) { setDatasets(data); }
+      else {
+        // one-time migration from localStorage
+        try {
+          const ls = localStorage.getItem('axiom:datasets');
+          if (ls) { setDatasets(JSON.parse(ls)); localStorage.removeItem('axiom:datasets'); }
+        } catch { /* ignore */ }
+      }
+      setDatasetsReady(true);
+    }).catch(() => setDatasetsReady(true));
+  }, []);
+
+  useEffect(() => {
+    idbGet<ProxyPreset[]>('axiom:proxyPresets').then(data => {
+      if (data != null) { setProxyPresets(data); }
+      else {
+        try {
+          const ls = localStorage.getItem('axiom:proxyPresets');
+          if (ls) { setProxyPresets(JSON.parse(ls)); localStorage.removeItem('axiom:proxyPresets'); }
+        } catch { /* ignore */ }
+      }
+      setProxiesReady(true);
+    }).catch(() => setProxiesReady(true));
+  }, []);
+
+  useEffect(() => { if (datasetsReady)  idbSet('axiom:datasets',     datasets).catch(console.error);     }, [datasets, datasetsReady]);
+  useEffect(() => { if (proxiesReady)   idbSet('axiom:proxyPresets', proxyPresets).catch(console.error); }, [proxyPresets, proxiesReady]);
+  useEffect(() => { localStorage.setItem('axiom:appSettings', JSON.stringify(appSettings)); }, [appSettings]);
 
   const selBoxRef = useRef<SelBox | null>(null);
   useEffect(() => { selBoxRef.current = selBox; }, [selBox]);
@@ -1201,6 +1228,31 @@ function CanvasInner() {
     return () => { unsub1(); unsub2(); };
   }, []);
 
+  const loadAxprojFromPath = useCallback(async (path: string) => {
+    try {
+      const raw = await ReadTextFile(path);
+      const data = JSON.parse(raw) as { nodes?: Node[]; edges?: Edge[] };
+      if (!Array.isArray(data.nodes)) return;
+      const nds = data.nodes as Node[];
+      const eds = (data.edges ?? []) as Edge[];
+      const dangerous = detectDangerous(nds);
+      if (dangerous.length > 0) {
+        setImportWarn({ nodes: nds, edges: eds, dangerous });
+      } else {
+        pushHistory(); setNodes(nds); setEdges(eds); setSelectedNode(null);
+      }
+    } catch { }
+  }, [pushHistory, setNodes, setEdges]);
+
+  useEffect(() => {
+    GetStartupFile().then(path => { if (path) loadAxprojFromPath(path); }).catch(() => {});
+  }, [loadAxprojFromPath]);
+
+  useEffect(() => {
+    const unsub = EventsOn('fileOpen', (path: string) => { if (path) loadAxprojFromPath(path); });
+    return () => { unsub(); };
+  }, [loadAxprojFromPath]);
+
   useEffect(() => {
     if (!bulkJobId) return;
     async function fetchBulkResults() {
@@ -1327,6 +1379,8 @@ function CanvasInner() {
     return ((n.data as {branches?: {id:string;label:string;color:string}[]}).branches ?? [])
       .map(b => ({ id: b.id, label: b.label, color: b.color }));
   }, [nodes]);
+
+  const availableVars = useMemo(() => buildAvailableVars(nodes, edges), [nodes, edges]);
 
   return (
     <div className="flex flex-col h-full w-full bg-[#0f1117]" onContextMenu={e => e.preventDefault()}>
@@ -1543,29 +1597,42 @@ function CanvasInner() {
         </div>
 
         {leftTab === 'flow' && paletteOpen && (
-          <div className="w-44 flex-shrink-0 bg-[#181b23] border-r border-white/5 flex flex-col overflow-y-auto">
-            <div className="px-3 py-2 text-[10px] text-gray-600 uppercase tracking-wider border-b border-white/5">
-              Drag to canvas
+          <div className="w-44 flex-shrink-0 bg-[#181b23] border-r border-white/5 flex flex-col overflow-hidden">
+            <div className="px-2 py-1.5 border-b border-white/5 flex-shrink-0">
+              <input
+                type="text"
+                placeholder="Filter nodes…"
+                value={paletteSearch}
+                onChange={e => setPaletteSearch(e.target.value)}
+                className="w-full bg-white/5 border border-white/10 rounded px-2 py-0.5 text-[10px] text-gray-300 placeholder-gray-700 focus:outline-none focus:border-indigo-500/50"
+              />
             </div>
-            <div className="flex flex-col">
+            <div className="flex flex-col overflow-y-auto flex-1">
               {PALETTE_CATEGORIES.map(cat => {
-                const collapsed = collapsedCats.has(cat.id);
+                const term = paletteSearch.toLowerCase();
+                const filteredItems = term
+                  ? cat.items.filter(i => i.label.toLowerCase().includes(term) || i.description.toLowerCase().includes(term))
+                  : cat.items;
+                if (filteredItems.length === 0) return null;
+                const collapsed = !term && collapsedCats.has(cat.id);
                 return (
                   <div key={cat.id}>
-                    <button
-                      onClick={() => setCollapsedCats(prev => {
-                        const next = new Set(prev);
-                        if (next.has(cat.id)) next.delete(cat.id); else next.add(cat.id);
-                        return next;
-                      })}
-                      className="w-full flex items-center justify-between px-3 py-1.5 text-[10px] font-semibold text-gray-500 uppercase tracking-wider hover:text-gray-300 hover:bg-white/5 transition-colors border-b border-white/5"
-                    >
-                      <span>{cat.label}</span>
-                      <span className="text-gray-700">{collapsed ? '▶' : '▼'}</span>
-                    </button>
+                    {!term && (
+                      <button
+                        onClick={() => setCollapsedCats(prev => {
+                          const next = new Set(prev);
+                          if (next.has(cat.id)) next.delete(cat.id); else next.add(cat.id);
+                          return next;
+                        })}
+                        className="w-full flex items-center justify-between px-3 py-1.5 text-[10px] font-semibold text-gray-500 uppercase tracking-wider hover:text-gray-300 hover:bg-white/5 transition-colors border-b border-white/5"
+                      >
+                        <span>{cat.label}</span>
+                        <span className="text-gray-700">{collapsed ? '▶' : '▼'}</span>
+                      </button>
+                    )}
                     {!collapsed && (
                       <div className="p-2 flex flex-col gap-1.5">
-                        {cat.items.map(item => (
+                        {filteredItems.map(item => (
                           <PaletteItem key={item.type} {...item}
                             disabled={item.type === 'output' && nodes.some(n => n.type === 'output' || n.type === 'condition')}
                           />
@@ -1688,7 +1755,7 @@ function CanvasInner() {
         />
         <div className="flex-shrink-0 bg-[#181b23] border-l border-white/5 overflow-hidden flex flex-col" style={{ width: panelWidth }}>
           <div key={selectedNode?.id ?? '__none'} className="ax-slide-in flex flex-col flex-1 min-h-0 overflow-hidden">
-            <NodeConfigPanel node={selectedNode} onChange={onNodeDataChange} onDelete={onNodeDelete} availableVars={buildAvailableVars(nodes, edges)} />
+            <NodeConfigPanel node={selectedNode} onChange={onNodeDataChange} onDelete={onNodeDelete} availableVars={availableVars} />
           </div>
         </div>
         </>}
@@ -1853,28 +1920,177 @@ function detectCodeLang(s: string): string {
 }
 
 
+const BODY_LIMIT = 100_000;
+const HLJS_LIMIT = 30_000;
+const MAX_MATCHES = 500;
+
+type SearchMatch = { start: number; end: number };
+
 function CodeViewerModal({ title, code, lang, onClose }: { title: string; code: string; lang: string; onClose: () => void }) {
+  const truncated   = code.length > BODY_LIMIT;
+  const displayCode = useMemo(() => truncated ? code.slice(0, BODY_LIMIT) : code, [code, truncated]);
+
   const codeRef = useRef<HTMLElement>(null);
+
+  const [search, setSearch]             = useState('');
+  const [effectiveSearch, setEffective] = useState('');
+  const [matchIdx, setMatchIdx]         = useState(0);
+  const [useRegex, setUseRegex]         = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function updateSearch(val: string) {
+    setSearch(val);
+    setMatchIdx(0);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => setEffective(val), 300);
+  }
+
+  const searchActiveRef = useRef(false);
+  searchActiveRef.current = effectiveSearch.length > 0;
+
+  const lowerCode = useMemo(() => displayCode.toLowerCase(), [displayCode]);
+
+  const { matches, capped, regexError } = useMemo((): { matches: SearchMatch[]; capped: boolean; regexError: string } => {
+    if (!effectiveSearch) return { matches: [], capped: false, regexError: '' };
+
+    if (useRegex) {
+      let re: RegExp;
+      try { re = new RegExp(effectiveSearch, 'gi'); }
+      catch (e) { return { matches: [], capped: false, regexError: (e as Error).message }; }
+      const out: SearchMatch[] = [];
+      let m: RegExpExecArray | null;
+      re.lastIndex = 0;
+      while ((m = re.exec(displayCode)) !== null) {
+        out.push({ start: m.index, end: m.index + m[0].length });
+        if (m[0].length === 0) re.lastIndex++;
+        if (out.length >= MAX_MATCHES) {
+          const more = re.exec(displayCode) !== null;
+          return { matches: out, capped: more, regexError: '' };
+        }
+      }
+      return { matches: out, capped: false, regexError: '' };
+    }
+
+    const term = effectiveSearch.toLowerCase();
+    const tlen = term.length;
+    if (!tlen) return { matches: [], capped: false, regexError: '' };
+    const out: SearchMatch[] = [];
+    let idx = 0;
+    while ((idx = lowerCode.indexOf(term, idx)) !== -1) {
+      out.push({ start: idx, end: idx + tlen });
+      idx += tlen;
+      if (out.length >= MAX_MATCHES) {
+        const more = lowerCode.indexOf(term, idx) !== -1;
+        return { matches: out, capped: more, regexError: '' };
+      }
+    }
+    return { matches: out, capped: false, regexError: '' };
+  }, [effectiveSearch, displayCode, lowerCode, useRegex]);
+
+  const safeIdx = matches.length > 0
+    ? ((matchIdx % matches.length) + matches.length) % matches.length
+    : 0;
+
   useEffect(() => {
+    if (effectiveSearch) return;
     const el = codeRef.current;
     if (!el) return;
     delete el.dataset.highlighted;
-    el.textContent = code;
-    if (lang !== 'plaintext') {
-      ensureHljs().then(hljs => { if (hljs && codeRef.current) hljs.highlightElement(codeRef.current); });
+    el.textContent = displayCode;
+    if (lang !== 'plaintext' && displayCode.length <= HLJS_LIMIT) {
+      ensureHljs().then(hljs => {
+        if (searchActiveRef.current || !codeRef.current) return;
+        hljs && hljs.highlightElement(codeRef.current);
+      });
     }
-  }, [code, lang]);
+  }, [displayCode, lang, effectiveSearch]);
+
+  useEffect(() => {
+    const el = codeRef.current;
+    if (!el || !effectiveSearch) return;
+    delete el.dataset.highlighted;
+    if (matches.length === 0) { el.textContent = displayCode; return; }
+    const frag = document.createDocumentFragment();
+    let cursor = 0, mi = 0;
+    for (const m of matches) {
+      if (cursor < m.start) frag.appendChild(document.createTextNode(displayCode.slice(cursor, m.start)));
+      const mark = document.createElement('mark');
+      mark.dataset.mi = String(mi++);
+      mark.textContent = displayCode.slice(m.start, m.end);
+      frag.appendChild(mark);
+      cursor = m.end;
+    }
+    if (cursor < displayCode.length) frag.appendChild(document.createTextNode(displayCode.slice(cursor)));
+    el.textContent = '';
+    el.appendChild(frag);
+  }, [effectiveSearch, matches, displayCode]);
+
+  const activeMarkRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const el = codeRef.current;
+    if (!el || !effectiveSearch || matches.length === 0) return;
+    activeMarkRef.current?.classList.remove('cv-mark-active');
+    const next = el.querySelector<HTMLElement>(`mark[data-mi="${safeIdx}"]`);
+    next?.classList.add('cv-mark-active');
+    activeMarkRef.current = next;
+    next?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [safeIdx, matches, effectiveSearch]);
+
+  function prev() { setMatchIdx(i => (i - 1 + Math.max(1, matches.length)) % Math.max(1, matches.length)); }
+  function next() { setMatchIdx(i => (i + 1) % Math.max(1, matches.length)); }
+
+  const inputBorder = regexError
+    ? 'border-red-500/60 focus:border-red-500'
+    : 'border-white/10 focus:border-indigo-500/50';
 
   return (
     <div className="fixed inset-0 z-[9999] bg-black/75 flex items-center justify-center" onClick={onClose}>
       <div className="bg-[#1c1f2e] border border-white/10 rounded-xl shadow-2xl flex flex-col"
         style={{ width: '82vw', height: '76vh' }} onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/5 flex-shrink-0">
-          <span className="text-sm font-semibold text-gray-200">{title}</span>
-          <div className="flex items-center gap-3">
-            <span className="text-[10px] text-gray-600 font-mono uppercase">{lang}</span>
-            <button onClick={onClose} className="text-gray-600 hover:text-gray-300 text-lg leading-none">✕</button>
+        <div className="flex items-center gap-3 px-4 py-2.5 border-b border-white/5 flex-shrink-0">
+          <span className="text-sm font-semibold text-gray-200 truncate flex-1 min-w-0">{title}</span>
+          {truncated && (
+            <span className="text-[10px] text-amber-500/80 flex-shrink-0 whitespace-nowrap">
+              First 100 KB of {(code.length / 1024).toFixed(0)} KB shown
+            </span>
+          )}
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <div className="flex items-center rounded border border-white/10 overflow-hidden">
+              <input
+                type="text"
+                placeholder="Search…"
+                value={search}
+                onChange={e => updateSearch(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') { e.preventDefault(); e.shiftKey ? prev() : next(); }
+                  if (e.key === 'Escape' && search) { e.stopPropagation(); updateSearch(''); }
+                }}
+                className={`bg-white/5 border-0 border-r ${inputBorder} px-2 py-0.5 text-xs text-gray-300 placeholder-gray-700 focus:outline-none w-28`}
+              />
+              <button
+                onClick={() => { setUseRegex(r => !r); setMatchIdx(0); }}
+                title="Toggle regular expression"
+                className={`px-1.5 py-0.5 text-[11px] font-mono transition-colors ${useRegex ? 'bg-indigo-500/25 text-indigo-300' : 'text-gray-600 hover:text-gray-300 bg-white/[0.03]'}`}
+              >.*</button>
+            </div>
+            {search && (
+              <>
+                <span className="text-[10px] w-20 text-center tabular-nums" title={regexError || undefined}
+                  style={{ color: regexError ? '#f87171' : '#6b7280' }}>
+                  {regexError ? 'invalid'
+                    : effectiveSearch !== search ? '…'
+                    : matches.length > 0 ? `${safeIdx + 1}/${capped ? `${MAX_MATCHES}+` : matches.length}`
+                    : 'no match'}
+                </span>
+                <button onClick={prev} disabled={matches.length === 0}
+                  className="text-gray-600 hover:text-gray-300 disabled:opacity-30 text-[11px] px-1">▲</button>
+                <button onClick={next} disabled={matches.length === 0}
+                  className="text-gray-600 hover:text-gray-300 disabled:opacity-30 text-[11px] px-1">▼</button>
+              </>
+            )}
           </div>
+          <span className="text-[10px] text-gray-600 font-mono uppercase flex-shrink-0">{lang}</span>
+          <button onClick={onClose} className="text-gray-600 hover:text-gray-300 text-lg leading-none flex-shrink-0">✕</button>
         </div>
         <div className="flex-1 overflow-auto">
           <pre className="m-0 p-4 text-xs leading-relaxed min-h-full bg-transparent select-text">
@@ -2097,10 +2313,30 @@ function LogStepRow({ step, onExpand }: { step: LogStep; onExpand: Expander }) {
   );
 }
 
+function stepMatchesSearch(step: LogStep, term: string): boolean {
+  if (step.nodeLabel.toLowerCase().includes(term)) return true;
+  if (step.error?.toLowerCase().includes(term)) return true;
+  return step.fields.some(f =>
+    f.label.toLowerCase().includes(term) || f.value.toLowerCase().includes(term),
+  );
+}
+
 function LogPane({ results, onExpand }: { results: RunResult[]; onExpand: Expander }) {
-  if (results.length === 0) return <div className="text-[11px] text-gray-700 text-center py-8">No log entries</div>;
+  const [logSearch, setLogSearch] = useState('');
+  const term = logSearch.toLowerCase();
+
   return (
     <div className="text-[11px]">
+      <div className="sticky top-0 z-10 pb-2 bg-[#181b23]">
+        <input
+          type="text"
+          placeholder="Filter steps…"
+          value={logSearch}
+          onChange={e => setLogSearch(e.target.value)}
+          className="w-full bg-white/5 border border-white/10 rounded px-2 py-0.5 text-[11px] text-gray-300 placeholder-gray-700 focus:outline-none focus:border-indigo-500/50"
+        />
+      </div>
+      {results.length === 0 && <div className="text-gray-700 text-center py-8">No log entries</div>}
       {results.map((r, ri) => {
         const latMs = r.latency ? `${(r.latency / 1e6).toFixed(0)}ms` : '—';
         const steps: LogStep[] = r.logSteps ?? [
@@ -2117,10 +2353,12 @@ function LogPane({ results, onExpand }: { results: RunResult[]; onExpand: Expand
             error: r.error,
           },
         ];
+        const visibleSteps = term ? steps.filter(s => stepMatchesSearch(s, term)) : steps;
+        if (visibleSteps.length === 0) return null;
         return (
           <div key={ri}>
             <RunSeparator result={r} />
-            {steps.map((step, si) => (
+            {visibleSteps.map((step, si) => (
               <LogStepRow key={si} step={step} onExpand={onExpand} />
             ))}
           </div>

@@ -21,8 +21,9 @@ import (
 )
 
 type App struct {
-	ctx    context.Context
-	engine *engine.Engine
+	ctx             context.Context
+	engine          *engine.Engine
+	startupFilePath string
 }
 
 func NewApp() *App {
@@ -34,6 +35,12 @@ func (a *App) startup(ctx context.Context) {
 	a.engine = engine.NewEngine(ctx, func(event string, data ...interface{}) {
 		runtime.EventsEmit(ctx, event, data...)
 	})
+}
+
+func (a *App) GetStartupFile() string {
+	p := a.startupFilePath
+	a.startupFilePath = ""
+	return p
 }
 
 

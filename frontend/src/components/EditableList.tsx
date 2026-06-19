@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useDeferredValue, useMemo } from 'react';
 
 interface Props {
   items: string[];
@@ -11,6 +11,8 @@ interface Props {
 
 type Mode = 'visual' | 'text';
 
+const PAGE_SIZE = 200;
+
 export function EditableList({
   items,
   onChange,
@@ -20,6 +22,19 @@ export function EditableList({
   renderMeta,
 }: Props) {
   const [mode, setMode] = useState<Mode>('visual');
+  const [page, setPage] = useState(0);
+
+  const pageCount = Math.ceil(items.length / PAGE_SIZE);
+  const safePage = Math.min(page, Math.max(0, pageCount - 1));
+  const pageStart = safePage * PAGE_SIZE;
+  const pageItems = items.slice(pageStart, pageStart + PAGE_SIZE);
+
+  // Reset to page 0 when the list is replaced entirely (e.g. file load)
+  const prevLengthRef = useRef(items.length);
+  useEffect(() => {
+    if (items.length < prevLengthRef.current) setPage(0);
+    prevLengthRef.current = items.length;
+  }, [items.length]);
 
   const [textDraft, setTextDraft] = useState('');
   const [textDirty, setTextDirty] = useState(false);
@@ -31,6 +46,13 @@ export function EditableList({
     }
   }, [mode, items]);
 
+  // Defer the expensive line-count computation so the textarea stays responsive
+  const deferredDraft = useDeferredValue(textDraft);
+  const textLineCount = useMemo(
+    () => deferredDraft.split('\n').filter(l => l.trim() && !l.trim().startsWith('#')).length,
+    [deferredDraft],
+  );
+
   function applyText() {
     const parsed = textDraft
       .split('\n')
@@ -40,7 +62,7 @@ export function EditableList({
     setTextDirty(false);
   }
 
-  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editingIndex, setEditingIndex] = useState<number | null>(null); // absolute index
   const [editValue, setEditValue] = useState('');
   const [addValue, setAddValue] = useState('');
   const editInputRef = useRef<HTMLInputElement>(null);
@@ -49,17 +71,17 @@ export function EditableList({
     if (editingIndex !== null) editInputRef.current?.focus();
   }, [editingIndex]);
 
-  function startEdit(i: number) {
+  function startEdit(absIdx: number) {
     if (readOnly) return;
-    setEditingIndex(i);
-    setEditValue(items[i]);
+    setEditingIndex(absIdx);
+    setEditValue(items[absIdx]);
   }
 
-  function commitEdit(i: number) {
+  function commitEdit(absIdx: number) {
     const trimmed = editValue.trim();
     if (!trimmed) { cancelEdit(); return; }
     const next = [...items];
-    next[i] = trimmed;
+    next[absIdx] = trimmed;
     onChange(next);
     setEditingIndex(null);
   }
@@ -69,8 +91,8 @@ export function EditableList({
     setEditValue('');
   }
 
-  function deleteItem(i: number) {
-    onChange(items.filter((_, idx) => idx !== i));
+  function deleteItem(absIdx: number) {
+    onChange(items.filter((_, idx) => idx !== absIdx));
   }
 
   function addItem() {
@@ -84,11 +106,11 @@ export function EditableList({
     setAddValue('');
   }
 
-  function moveItem(i: number, dir: -1 | 1) {
-    const j = i + dir;
+  function moveItem(absIdx: number, dir: -1 | 1) {
+    const j = absIdx + dir;
     if (j < 0 || j >= items.length) return;
     const next = [...items];
-    [next[i], next[j]] = [next[j], next[i]];
+    [next[absIdx], next[j]] = [next[j], next[absIdx]];
     onChange(next);
   }
 
@@ -138,7 +160,7 @@ export function EditableList({
                 Discard
               </button>
               <span className="text-[10px] text-gray-600 ml-auto">
-                {textDraft.split('\n').filter(l => l.trim() && !l.trim().startsWith('#')).length} items
+                {textLineCount} items
               </span>
             </div>
           )}
@@ -149,50 +171,73 @@ export function EditableList({
             {items.length === 0 && (
               <p className="text-center text-gray-600 text-xs mt-6 px-4">{placeholder}</p>
             )}
-            {items.map((item, i) => (
-              <div
-                key={i}
-                className="group flex items-center gap-1.5 px-3 py-1.5 border-b border-white/[0.04] hover:bg-white/[0.02]"
-              >
-                <span className="text-[10px] text-gray-700 w-6 flex-shrink-0 text-right select-none">{i + 1}</span>
+            {pageItems.map((item, localIdx) => {
+              const absIdx = pageStart + localIdx;
+              return (
+                <div
+                  key={absIdx}
+                  className="group flex items-center gap-1.5 px-3 py-1.5 border-b border-white/[0.04] hover:bg-white/[0.02]"
+                >
+                  <span className="text-[10px] text-gray-700 w-8 flex-shrink-0 text-right select-none tabular-nums">{absIdx + 1}</span>
 
-                {editingIndex === i ? (
-                  <input
-                    ref={editInputRef}
-                    className="flex-1 min-w-0 bg-[#0d0f14] border border-indigo-500 rounded px-1.5 py-0.5 text-xs font-mono text-gray-200 focus:outline-none"
-                    value={editValue}
-                    onChange={e => setEditValue(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') commitEdit(i);
-                      if (e.key === 'Escape') cancelEdit();
-                    }}
-                    onBlur={() => commitEdit(i)}
-                  />
-                ) : (
-                  <span
-                    className="flex-1 min-w-0 text-xs font-mono text-gray-300 truncate cursor-text"
-                    onDoubleClick={() => startEdit(i)}
-                    title="Double-click to edit"
-                  >
-                    {item}
-                  </span>
-                )}
+                  {editingIndex === absIdx ? (
+                    <input
+                      ref={editInputRef}
+                      className="flex-1 min-w-0 bg-[#0d0f14] border border-indigo-500 rounded px-1.5 py-0.5 text-xs font-mono text-gray-200 focus:outline-none"
+                      value={editValue}
+                      onChange={e => setEditValue(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') commitEdit(absIdx);
+                        if (e.key === 'Escape') cancelEdit();
+                      }}
+                      onBlur={() => commitEdit(absIdx)}
+                    />
+                  ) : (
+                    <span
+                      className="flex-1 min-w-0 text-xs font-mono text-gray-300 truncate cursor-text"
+                      onDoubleClick={() => startEdit(absIdx)}
+                      title="Double-click to edit"
+                    >
+                      {item}
+                    </span>
+                  )}
 
-                {renderMeta && (
-                  <span className="flex-shrink-0">{renderMeta(item, i)}</span>
-                )}
+                  {renderMeta && (
+                    <span className="flex-shrink-0">{renderMeta(item, absIdx)}</span>
+                  )}
 
-                {!readOnly && editingIndex !== i && (
-                  <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-                    <IconBtn title="Move up" onClick={() => moveItem(i, -1)}>▲</IconBtn>
-                    <IconBtn title="Move down" onClick={() => moveItem(i, 1)}>▼</IconBtn>
-                    <IconBtn title="Edit" onClick={() => startEdit(i)}>✎</IconBtn>
-                    <IconBtn title="Delete" className="hover:text-red-400" onClick={() => deleteItem(i)}>✕</IconBtn>
-                  </div>
-                )}
-              </div>
-            ))}
+                  {!readOnly && editingIndex !== absIdx && (
+                    <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                      <IconBtn title="Move up" onClick={() => moveItem(absIdx, -1)}>▲</IconBtn>
+                      <IconBtn title="Move down" onClick={() => moveItem(absIdx, 1)}>▼</IconBtn>
+                      <IconBtn title="Edit" onClick={() => startEdit(absIdx)}>✎</IconBtn>
+                      <IconBtn title="Delete" className="hover:text-red-400" onClick={() => deleteItem(absIdx)}>✕</IconBtn>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
+
+          {pageCount > 1 && (
+            <div className="flex-shrink-0 flex items-center justify-between px-3 py-1.5 border-t border-white/5 text-[10px] text-gray-600">
+              <button
+                disabled={safePage === 0}
+                onClick={() => setPage(safePage - 1)}
+                className="px-2 py-0.5 rounded hover:text-gray-300 disabled:opacity-30 disabled:cursor-default transition-colors"
+              >
+                ◀ Prev
+              </button>
+              <span>{safePage + 1} / {pageCount} <span className="text-gray-700">({PAGE_SIZE} per page)</span></span>
+              <button
+                disabled={safePage >= pageCount - 1}
+                onClick={() => setPage(safePage + 1)}
+                className="px-2 py-0.5 rounded hover:text-gray-300 disabled:opacity-30 disabled:cursor-default transition-colors"
+              >
+                Next ▶
+              </button>
+            </div>
+          )}
 
           {!readOnly && (
             <div className="flex-shrink-0 flex gap-1.5 px-3 py-2 border-t border-white/5">

@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* Code viewer search marks */
+mark { background: rgba(251,191,36,0.22); color: inherit; border-radius: 2px; }
+mark.cv-mark-active { background: rgba(251,191,36,0.8); color: #000; }
+
 .react-flow__edgelabel-renderer {
   z-index: 11 !important;
 }

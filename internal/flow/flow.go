@@ -53,10 +53,52 @@ func safeCompile(pattern string) (*regexp.Regexp, error) {
 	return regexp.Compile(pattern)
 }
 
+var regexCache sync.Map
+
+func cachedCompile(pattern string) (*regexp.Regexp, error) {
+	if v, ok := regexCache.Load(pattern); ok {
+		return v.(*regexp.Regexp), nil
+	}
+	re, err := safeCompile(pattern)
+	if err != nil {
+		return nil, err
+	}
+	actual, _ := regexCache.LoadOrStore(pattern, re)
+	return actual.(*regexp.Regexp), nil
+}
+
+var flowBodyPool = sync.Pool{
+	New: func() interface{} {
+		buf := make([]byte, maxFlowBody)
+		return &buf
+	},
+}
+
 
 type Graph struct {
-	Nodes []Node `json:"nodes"`
-	Edges []Edge `json:"edges"`
+	Nodes      []Node `json:"nodes"`
+	Edges      []Edge `json:"edges"`
+	nodeByID   map[string]*Node
+	adjBySrc   map[string][]Edge
+	entryNodes []string
+}
+
+func (g *Graph) Init() {
+	g.nodeByID = make(map[string]*Node, len(g.Nodes))
+	for i := range g.Nodes {
+		g.nodeByID[g.Nodes[i].ID] = &g.Nodes[i]
+	}
+	g.adjBySrc = make(map[string][]Edge, len(g.Nodes))
+	hasIncoming := make(map[string]bool, len(g.Edges))
+	for _, e := range g.Edges {
+		g.adjBySrc[e.Source] = append(g.adjBySrc[e.Source], e)
+		hasIncoming[e.Target] = true
+	}
+	for _, n := range g.Nodes {
+		if n.Type != "comment" && !hasIncoming[n.ID] {
+			g.entryNodes = append(g.entryNodes, n.ID)
+		}
+	}
 }
 
 type Node struct {
@@ -72,36 +114,14 @@ type Edge struct {
 }
 
 func (g *Graph) byID(id string) *Node {
-	for i := range g.Nodes {
-		if g.Nodes[i].ID == id {
-			return &g.Nodes[i]
-		}
-	}
-	return nil
-}
-
-func (g *Graph) entries() []string {
-	has := make(map[string]bool, len(g.Edges))
-	for _, e := range g.Edges {
-		has[e.Target] = true
-	}
-	var out []string
-	for _, n := range g.Nodes {
-		if n.Type != "comment" && !has[n.ID] {
-			out = append(out, n.ID)
-		}
-	}
-	return out
+	return g.nodeByID[id]
 }
 
 const noMatchHandle = "\x00no_match"
 
 func (g *Graph) next(src, handle string) []string {
 	var out []string
-	for _, e := range g.Edges {
-		if e.Source != src {
-			continue
-		}
+	for _, e := range g.adjBySrc[src] {
 		if handle == "" || e.SourceHandle == handle {
 			out = append(out, e.Target)
 		}
@@ -115,6 +135,19 @@ type vars map[string]string
 var varRe = regexp.MustCompile(`\{\{([^}]+)\}\}`)
 
 func (v vars) interp(s string) string {
+	if !strings.Contains(s, "{{") {
+		return s
+	}
+	if len(s) > 4 && s[0] == '{' && s[1] == '{' && s[len(s)-1] == '}' && s[len(s)-2] == '}' {
+		inner := s[2 : len(s)-2]
+		if !strings.Contains(inner, "{{") {
+			name := strings.TrimSpace(inner)
+			if val, ok := v[name]; ok {
+				return val
+			}
+			return s
+		}
+	}
 	return varRe.ReplaceAllStringFunc(s, func(m string) string {
 		name := strings.TrimSpace(m[2 : len(m)-2])
 		if val, ok := v[name]; ok {
@@ -122,6 +155,14 @@ func (v vars) interp(s string) string {
 		}
 		return m
 	})
+}
+
+func (v vars) inputOrBody(raw string) string {
+	s := v.interp(raw)
+	if s == "" {
+		return v["body"]
+	}
+	return s
 }
 
 func (v vars) set(name, value string) {
@@ -181,8 +222,9 @@ func Run(ctx context.Context, client tls_client.HttpClient, g *Graph, initVars m
 	var lastStatus int
 	var lastBody string
 
-	visited := make(map[string]bool)
-	queue := g.entries()
+	visited := make(map[string]bool, len(g.Nodes))
+	queue := make([]string, len(g.entryNodes))
+	copy(queue, g.entryNodes)
 
 	for len(queue) > 0 {
 		id := queue[0]
@@ -294,13 +336,8 @@ func label(n *Node) string {
 }
 
 
-var (
-	rMu sync.Mutex
-	rng = rand.New(rand.NewSource(time.Now().UnixNano()))
-)
-
-func rIntn(n int) int      { rMu.Lock(); v := rng.Intn(n); rMu.Unlock(); return v }
-func rFloat64() float64    { rMu.Lock(); v := rng.Float64(); rMu.Unlock(); return v }
+func rIntn(n int) int   { return rand.Intn(n) }
+func rFloat64() float64 { return rand.Float64() }
 
 
 func execHTTP(ctx context.Context, client tls_client.HttpClient, node *Node, vv vars) job.LogStep {
@@ -388,10 +425,11 @@ func execHTTP(ctx context.Context, client tls_client.HttpClient, node *Node, vv 
 	}
 	defer resp.Body.Close()
 
-	buf := make([]byte, maxFlowBody)
-	n, _ := io.ReadFull(resp.Body, buf)
+	bufPtr := flowBodyPool.Get().(*[]byte)
+	n, _ := io.ReadFull(resp.Body, *bufPtr)
 	_, _ = io.Copy(io.Discard, resp.Body)
-	respBody := string(buf[:n])
+	respBody := string((*bufPtr)[:n])
+	flowBodyPool.Put(bufPtr)
 	statusCodeStr := strconv.Itoa(resp.StatusCode)
 
 	rsHeaders := make(map[string]string, len(resp.Header))
@@ -441,20 +479,18 @@ func execHTTP(ctx context.Context, client tls_client.HttpClient, node *Node, vv 
 	}
 }
 
+var httpStatusTexts = map[int]string{
+	200: "OK", 201: "Created", 204: "No Content",
+	301: "Moved Permanently", 302: "Found", 303: "See Other",
+	304: "Not Modified", 307: "Temporary Redirect", 308: "Permanent Redirect",
+	400: "Bad Request", 401: "Unauthorized", 403: "Forbidden",
+	404: "Not Found", 405: "Method Not Allowed", 409: "Conflict",
+	422: "Unprocessable Entity", 429: "Too Many Requests",
+	500: "Internal Server Error", 502: "Bad Gateway", 503: "Service Unavailable",
+}
+
 func httpStatusText(code int) string {
-	texts := map[int]string{
-		200: "OK", 201: "Created", 204: "No Content",
-		301: "Moved Permanently", 302: "Found", 303: "See Other",
-		304: "Not Modified", 307: "Temporary Redirect", 308: "Permanent Redirect",
-		400: "Bad Request", 401: "Unauthorized", 403: "Forbidden",
-		404: "Not Found", 405: "Method Not Allowed", 409: "Conflict",
-		422: "Unprocessable Entity", 429: "Too Many Requests",
-		500: "Internal Server Error", 502: "Bad Gateway", 503: "Service Unavailable",
-	}
-	if t, ok := texts[code]; ok {
-		return t
-	}
-	return ""
+	return httpStatusTexts[code]
 }
 
 
@@ -478,7 +514,7 @@ func execRegex(node *Node, vv vars) job.LogStep {
 		return errStep("regex_extract", lbl, "group index must be >= 0")
 	}
 
-	input := vv.interp(d.Input)
+	input := vv.inputOrBody(d.Input)
 	pattern := d.Pattern
 	if d.CaseInsensitive {
 		pattern = "(?i)" + pattern
@@ -487,7 +523,7 @@ func execRegex(node *Node, vv vars) job.LogStep {
 		pattern = "(?m)" + pattern
 	}
 
-	re, err := safeCompile(pattern)
+	re, err := cachedCompile(pattern)
 	if err != nil {
 		return errStep("regex_extract", lbl, "invalid pattern: "+err.Error())
 	}
@@ -535,7 +571,7 @@ func execHTMLSelect(node *Node, vv vars) job.LogStep {
 	_ = json.Unmarshal(node.Data, &d)
 
 	lbl := d.Label; if lbl == "" { lbl = "HTML Select" }
-	input := vv.interp(d.Input)
+	input := vv.inputOrBody(d.Input)
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(input))
 	if err != nil {
 		return errStep("html_select", lbl, "parse error: "+err.Error())
@@ -598,7 +634,7 @@ func execParse(node *Node, vv vars) job.LogStep {
 	_ = json.Unmarshal(node.Data, &d)
 
 	lbl := d.Label; if lbl == "" { lbl = "Parse" }
-	input := vv.interp(d.Input)
+	input := vv.inputOrBody(d.Input)
 	var result string
 
 	switch d.ParseType {
@@ -729,7 +765,7 @@ func execJSONExtract(node *Node, vv vars) job.LogStep {
 	_ = json.Unmarshal(node.Data, &d)
 
 	lbl := d.Label; if lbl == "" { lbl = "JSON Extract" }
-	input := vv.interp(d.Input)
+	input := vv.inputOrBody(d.Input)
 
 	var obj interface{}
 	if err := json.Unmarshal([]byte(input), &obj); err != nil {
@@ -1013,7 +1049,7 @@ func execStringOp(node *Node, vv vars) job.LogStep {
 	case "remove":
 		result = strings.ReplaceAll(input, p1, "")
 	case "regex_replace":
-		re, err := safeCompile(p1)
+		re, err := cachedCompile(p1)
 		if err != nil {
 			result = input
 		} else {
@@ -1333,7 +1369,7 @@ func evalRule(r conditionRule, vv vars, statusCode int, body string) bool {
 	case "lt":          a, _ := strconv.ParseFloat(subject, 64); b, _ := strconv.ParseFloat(want, 64); return a < b
 	case "gte":         a, _ := strconv.ParseFloat(subject, 64); b, _ := strconv.ParseFloat(want, 64); return a >= b
 	case "lte":         a, _ := strconv.ParseFloat(subject, 64); b, _ := strconv.ParseFloat(want, 64); return a <= b
-	case "regex":       re, err := safeCompile(want); if err != nil { return false }; return re.MatchString(subject)
+	case "regex":       re, err := cachedCompile(want); if err != nil { return false }; return re.MatchString(subject)
 	case "is_empty":    return strings.TrimSpace(subject) == ""
 	case "not_empty":   return strings.TrimSpace(subject) != ""
 	case "starts_with": return strings.HasPrefix(subject, want)
