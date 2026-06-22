@@ -11,7 +11,7 @@ import { EventsOn, BrowserOpenURL } from '../../wailsjs/runtime/runtime';
 import {
   CreateJob, StartJob, StopJob, GetResults,
   OpenAxprojDialog, SaveAxprojDialog, ReadTextFile, WriteTextFile,
-  GetAppVersion, GetOS, PerformUpdate, GetStartupFile,
+  GetAppVersion, GetOS, PerformUpdate, GetStartupFile, OpenDevTools,
 } from '../../wailsjs/go/main/App';
 import { nodeTypes, PALETTE_CATEGORIES, DEFAULT_NODE_DATA, CUSTOM_COLORS, type RequestNodeData } from './canvas/nodeTypes';
 import { UA_PRESETS, BROWSER_LABELS } from './canvas/NodeConfigPanel';
@@ -876,12 +876,10 @@ function CanvasInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leftTab]);
 
-  // Load large data from IndexedDB on mount (localStorage has a ~5 MB quota)
   useEffect(() => {
     idbGet<DataSet[]>('axiom:datasets').then(data => {
       if (data != null) { setDatasets(data); }
       else {
-        // one-time migration from localStorage
         try {
           const ls = localStorage.getItem('axiom:datasets');
           if (ls) { setDatasets(JSON.parse(ls)); localStorage.removeItem('axiom:datasets'); }
@@ -1252,6 +1250,17 @@ function CanvasInner() {
     const unsub = EventsOn('fileOpen', (path: string) => { if (path) loadAxprojFromPath(path); });
     return () => { unsub(); };
   }, [loadAxprojFromPath]);
+
+  useEffect(() => {
+    const onDevTools = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'I') {
+        e.preventDefault();
+        OpenDevTools().catch(() => {});
+      }
+    };
+    window.addEventListener('keydown', onDevTools);
+    return () => window.removeEventListener('keydown', onDevTools);
+  }, []);
 
   useEffect(() => {
     if (!bulkJobId) return;
@@ -2266,8 +2275,8 @@ function LogStepRow({ step, onExpand }: { step: LogStep; onExpand: Expander }) {
   const [open, setOpen] = useState(true);
   const stripe = NODE_STRIPE_COLOR[step.nodeType] ?? '#6b7280';
   const icon   = NODE_ICONS[step.nodeType] ?? '?';
-  const expandFields = step.fields.filter(f => f.expandable);
-  const plainFields  = step.fields.filter(f => !f.expandable);
+  const expandFields = (step.fields ?? []).filter(f => f.expandable);
+  const plainFields  = (step.fields ?? []).filter(f => !f.expandable);
   const hasDetail = plainFields.length > 0 || expandFields.length > 0 || step.error;
   return (
     <div className="flex items-start gap-0 mb-1 rounded overflow-hidden text-[11px]">
@@ -2316,7 +2325,7 @@ function LogStepRow({ step, onExpand }: { step: LogStep; onExpand: Expander }) {
 function stepMatchesSearch(step: LogStep, term: string): boolean {
   if (step.nodeLabel.toLowerCase().includes(term)) return true;
   if (step.error?.toLowerCase().includes(term)) return true;
-  return step.fields.some(f =>
+  return (step.fields ?? []).some(f =>
     f.label.toLowerCase().includes(term) || f.value.toLowerCase().includes(term),
   );
 }

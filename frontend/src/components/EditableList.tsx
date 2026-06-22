@@ -29,7 +29,6 @@ export function EditableList({
   const pageStart = safePage * PAGE_SIZE;
   const pageItems = items.slice(pageStart, pageStart + PAGE_SIZE);
 
-  // Reset to page 0 when the list is replaced entirely (e.g. file load)
   const prevLengthRef = useRef(items.length);
   useEffect(() => {
     if (items.length < prevLengthRef.current) setPage(0);
@@ -46,7 +45,6 @@ export function EditableList({
     }
   }, [mode, items]);
 
-  // Defer the expensive line-count computation so the textarea stays responsive
   const deferredDraft = useDeferredValue(textDraft);
   const textLineCount = useMemo(
     () => deferredDraft.split('\n').filter(l => l.trim() && !l.trim().startsWith('#')).length,

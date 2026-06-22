@@ -182,10 +182,16 @@ func (a *App) performUpdateWindows(installerPath string) error {
 	newAppPath := filepath.Join(filepath.Dir(exePath), "Axiom.exe")
 
 	script := fmt.Sprintf(`$proc = Get-Process -Id %d -ErrorAction SilentlyContinue
-if ($proc) { $proc.WaitForExit(15000) }
-Start-Process -FilePath '%s' -ArgumentList '/S' -Wait
+if ($proc) { $proc.WaitForExit(30000) }
+$inst = Start-Process -FilePath '%s' -PassThru
+if ($inst) { $inst.WaitForExit(120000) }
+$deadline = (Get-Date).AddSeconds(60)
+while ((Get-Date) -lt $deadline) {
+    if (Test-Path '%s') { break }
+    Start-Sleep -Milliseconds 500
+}
 if (Test-Path '%s') { Start-Process '%s' }
-`, os.Getpid(), installerPath, newAppPath, newAppPath)
+`, os.Getpid(), installerPath, newAppPath, newAppPath, newAppPath)
 
 	scriptPath := filepath.Join(os.TempDir(), "axiom-update.ps1")
 	if err := os.WriteFile(scriptPath, []byte(script), 0644); err != nil {
@@ -198,7 +204,7 @@ if (Test-Path '%s') { Start-Process '%s' }
 	}
 
 	go func() {
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(500 * time.Millisecond)
 		runtime.Quit(a.ctx)
 	}()
 	return nil
