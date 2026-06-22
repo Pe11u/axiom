@@ -17,13 +17,5 @@
     "copyright": "Copyright © 2026 t4rutaru",
     "comments": "Axiom"
   },
-  "fileAssociations": [
-    {
-      "ext": "axproj",
-      "name": "AxiomPreset",
-      "description": "Axiom Preset File",
-      "iconName": "axprojIcon",
-      "role": "Editor"
-    }
-  ]
+  "fileAssociations": []
 }

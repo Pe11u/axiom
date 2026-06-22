@@ -1059,7 +1059,7 @@ function CanvasInner() {
   }
 
   const [menuExportTarget, setMenuExportTarget] = useState<StoredPreset | null>(null);
-  const [importWarn, setImportWarn] = useState<{ nodes: Node[]; edges: Edge[]; dangerous: string[] } | null>(null);
+  const [importWarn, setImportWarn] = useState<{ nodes: Node[]; edges: Edge[]; dangerous: string[]; name?: string } | null>(null);
 
   function exportCurrentPreset() {
     setOpenMenu(null);
@@ -1226,21 +1226,36 @@ function CanvasInner() {
     return () => { unsub1(); unsub2(); };
   }, []);
 
+  const loadPresetIntoFlow = useCallback((pNodes: Node[], pEdges: Edge[], name: string) => {
+    const flows = loadFlows();
+    flows[name] = { name, nodes: pNodes, edges: pEdges };
+    saveFlows(flows);
+    if (name === flowName) {
+      setNodes(pNodes); setEdges(pEdges); setSelectedNode(null);
+      setFlowNames(Object.keys(flows));
+    } else {
+      setFlowName(name);
+      setNameVal(name);
+    }
+    setLeftTab('flow');
+  }, [flowName, setNodes, setEdges]);
+
   const loadAxprojFromPath = useCallback(async (path: string) => {
     try {
       const raw = await ReadTextFile(path);
-      const data = JSON.parse(raw) as { nodes?: Node[]; edges?: Edge[] };
+      const data = JSON.parse(raw) as { nodes?: Node[]; edges?: Edge[]; name?: string };
       if (!Array.isArray(data.nodes)) return;
       const nds = data.nodes as Node[];
       const eds = (data.edges ?? []) as Edge[];
+      const name = data.name ?? path.split(/[\\/]/).pop()?.replace(/\.axproj$/, '') ?? 'Imported';
       const dangerous = detectDangerous(nds);
       if (dangerous.length > 0) {
-        setImportWarn({ nodes: nds, edges: eds, dangerous });
+        setImportWarn({ nodes: nds, edges: eds, dangerous, name });
       } else {
-        pushHistory(); setNodes(nds); setEdges(eds); setSelectedNode(null);
+        pushHistory(); loadPresetIntoFlow(nds, eds, name);
       }
     } catch { }
-  }, [pushHistory, setNodes, setEdges]);
+  }, [pushHistory, loadPresetIntoFlow]);
 
   useEffect(() => {
     GetStartupFile().then(path => { if (path) loadAxprojFromPath(path); }).catch(() => {});
@@ -1659,7 +1674,7 @@ function CanvasInner() {
           <PresetsPanel
             currentNodes={nodes}
             currentEdges={edges}
-            onLoad={(pNodes, pEdges) => { setNodes(pNodes); setEdges(pEdges); setLeftTab('flow'); }}
+            onLoad={(pNodes, pEdges, name) => { pushHistory(); loadPresetIntoFlow(pNodes, pEdges, name); }}
             flowName={flowName}
             flowNames={flowNames}
             onSelectFlow={(name) => { setFlowName(name); setNameVal(name); }}
@@ -1872,7 +1887,11 @@ function CanvasInner() {
               </button>
               <button onClick={() => {
                   pushHistory();
-                  setNodes(importWarn.nodes); setEdges(importWarn.edges); setSelectedNode(null);
+                  if (importWarn.name) {
+                    loadPresetIntoFlow(importWarn.nodes, importWarn.edges, importWarn.name);
+                  } else {
+                    setNodes(importWarn.nodes); setEdges(importWarn.edges); setSelectedNode(null);
+                  }
                   setImportWarn(null);
                 }}
                 className="px-4 py-1.5 rounded bg-amber-600 hover:bg-amber-500 text-xs text-white font-medium transition-colors">
@@ -4388,7 +4407,7 @@ function detectDangerous(nodes: Node[]): string[] {
 function PresetsPanel({ currentNodes, currentEdges, onLoad, flowName, flowNames, onSelectFlow, onNewFlow, onDeleteFlow }: {
   currentNodes: Node[];
   currentEdges: Edge[];
-  onLoad: (nodes: Node[], edges: Edge[]) => void;
+  onLoad: (nodes: Node[], edges: Edge[], name: string) => void;
   flowName: string;
   flowNames: string[];
   onSelectFlow: (name: string) => void;
@@ -4509,18 +4528,18 @@ function PresetsPanel({ currentNodes, currentEdges, onLoad, flowName, flowNames,
       };
       persist([entry, ...presets]);
       if (dangerous.length > 0) {
-        setWarn({ preset: entry, onConfirm: () => { onLoad(entry.nodes, entry.edges); setWarn(null); } });
+        setWarn({ preset: entry, onConfirm: () => { onLoad(entry.nodes, entry.edges, entry.name); setWarn(null); } });
       } else {
-        onLoad(entry.nodes, entry.edges);
+        onLoad(entry.nodes, entry.edges, entry.name);
       }
     } catch (e) { setError(String(e)); }
   }
 
   function loadPresetEntry(p: StoredPreset) {
     if (p.dangerousTypes.length > 0) {
-      setWarn({ preset: p, onConfirm: () => { onLoad(p.nodes, p.edges); setWarn(null); } });
+      setWarn({ preset: p, onConfirm: () => { onLoad(p.nodes, p.edges, p.name); setWarn(null); } });
     } else {
-      onLoad(p.nodes, p.edges);
+      onLoad(p.nodes, p.edges, p.name);
     }
   }
 

@@ -24,7 +24,9 @@ import (
 	"time"
 
 	"bytes"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 
 	"golang.org/x/text/encoding/charmap"
@@ -192,7 +194,7 @@ func parseBase(data json.RawMessage) baseOut {
 
 func field(label, value string) job.LogField          { return job.LogField{Label: label, Value: value} }
 func fieldExp(label, value string) job.LogField        { return job.LogField{Label: label, Value: value, Expandable: true} }
-func errStep(nodeType, lbl, msg string) job.LogStep    { return job.LogStep{NodeType: nodeType, NodeLabel: lbl, Error: msg} }
+func errStep(nodeType, lbl, msg string) job.LogStep    { return job.LogStep{NodeType: nodeType, NodeLabel: lbl, Fields: []job.LogField{}, Error: msg} }
 
 
 type Result struct {
@@ -278,6 +280,10 @@ func Run(ctx context.Context, client tls_client.HttpClient, g *Graph, initVars m
 			step = execWait(ctx, node)
 		case "terminal":
 			step = execTerminal(ctx, node, vv)
+		case "file_read":
+			step = execFileRead(node, vv)
+		case "file_write":
+			step = execFileWrite(node, vv)
 		case "comment":
 			continue
 		default:
@@ -1492,5 +1498,142 @@ func execWait(ctx context.Context, node *Node) job.LogStep {
 		NodeType:  "wait",
 		NodeLabel: lbl,
 		Fields:    []job.LogField{field("duration", fmt.Sprintf("%dms", d.Ms))},
+	}
+}
+
+func execFileRead(node *Node, vv vars) job.LogStep {
+	var d struct {
+		Label        string `json:"label"`
+		Path         string `json:"path"`
+		Mode         string `json:"mode"`
+		Index        int    `json:"index"`
+		Encoding     string `json:"encoding"`
+		VarName      string `json:"varName"`
+		EncodeOutput bool   `json:"encodeOutput"`
+	}
+	_ = json.Unmarshal(node.Data, &d)
+	lbl := d.Label; if lbl == "" { lbl = "File Read" }
+
+	path := vv.interp(d.Path)
+	if path == "" {
+		return errStep("file_read", lbl, "file path is required")
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return errStep("file_read", lbl, err.Error())
+	}
+	content := decodeBytes(raw, d.Encoding)
+
+	var result string
+	switch d.Mode {
+	case "full", "":
+		result = content
+	case "lines":
+		lines := fileLines(content)
+		b, _ := json.Marshal(lines)
+		result = string(b)
+	case "line_at":
+		lines := fileLines(content)
+		if d.Index < 0 || d.Index >= len(lines) {
+			return errStep("file_read", lbl, fmt.Sprintf("line index %d out of range (file has %d lines)", d.Index, len(lines)))
+		}
+		result = lines[d.Index]
+	case "random_line":
+		lines := fileLines(content)
+		if len(lines) == 0 {
+			return errStep("file_read", lbl, "file is empty")
+		}
+		result = lines[rIntn(len(lines))]
+	default:
+		result = content
+	}
+
+	if d.EncodeOutput && result != "" {
+		result = base64.StdEncoding.EncodeToString([]byte(result))
+	}
+	vv.set(d.VarName, result)
+
+	return job.LogStep{
+		NodeType:  "file_read",
+		NodeLabel: lbl,
+		Fields:    []job.LogField{field("path", path), field("mode", d.Mode), fieldExp(d.VarName, result)},
+	}
+}
+
+func fileLines(s string) []string {
+	s = strings.TrimRight(s, "\r\n")
+	if s == "" {
+		return nil
+	}
+	raw := strings.Split(s, "\n")
+	out := make([]string, 0, len(raw))
+	for _, l := range raw {
+		l = strings.TrimRight(l, "\r")
+		if l != "" {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+func execFileWrite(node *Node, vv vars) job.LogStep {
+	var d struct {
+		Label   string `json:"label"`
+		Path    string `json:"path"`
+		Content string `json:"content"`
+		Mode    string `json:"mode"`
+		Newline bool   `json:"newline"`
+	}
+	_ = json.Unmarshal(node.Data, &d)
+	lbl := d.Label; if lbl == "" { lbl = "File Write" }
+
+	path := vv.interp(d.Path)
+	if path == "" {
+		return errStep("file_write", lbl, "file path is required")
+	}
+
+	if d.Content == "" {
+		return errStep("file_write", lbl, "content field is empty")
+	}
+	content := vv.interp(d.Content)
+	if d.Newline && content != "" {
+		content += "\n"
+	}
+	data := []byte(content)
+
+	if dir := filepath.Dir(path); dir != "" {
+		if mkErr := os.MkdirAll(dir, 0755); mkErr != nil {
+			return errStep("file_write", lbl, mkErr.Error())
+		}
+	}
+
+	var err error
+	switch d.Mode {
+	case "write":
+		err = os.WriteFile(path, data, 0644)
+	case "prepend":
+		existing, readErr := os.ReadFile(path)
+		if readErr != nil && !os.IsNotExist(readErr) {
+			return errStep("file_write", lbl, readErr.Error())
+		}
+		err = os.WriteFile(path, append(data, existing...), 0644)
+	default:
+		f, openErr := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if openErr != nil {
+			return errStep("file_write", lbl, openErr.Error())
+		}
+		_, err = f.Write(data)
+		f.Close()
+	}
+
+	if err != nil {
+		return errStep("file_write", lbl, err.Error())
+	}
+
+	return job.LogStep{
+		NodeType:  "file_write",
+		NodeLabel: lbl,
+		Fields:    []job.LogField{field("path", path), field("mode", d.Mode), field("bytes", strconv.Itoa(len(data)))},
 	}
 }

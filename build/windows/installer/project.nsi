@@ -94,6 +94,15 @@ Section
     !insertmacro wails.associateFiles
     !insertmacro wails.associateCustomProtocols
 
+    File "..\axprojIcon.ico"
+    WriteRegStr SHELL_CONTEXT "Software\Classes\.axproj" "" "AxiomPreset"
+    WriteRegStr SHELL_CONTEXT "Software\Classes\AxiomPreset" "" "Axiom Preset File"
+    WriteRegStr SHELL_CONTEXT "Software\Classes\AxiomPreset\DefaultIcon" "" "$INSTDIR\axprojIcon.ico"
+    WriteRegStr SHELL_CONTEXT "Software\Classes\AxiomPreset\shell" "" "open"
+    WriteRegStr SHELL_CONTEXT "Software\Classes\AxiomPreset\shell\open" "" "Open with Axiom"
+    WriteRegStr SHELL_CONTEXT "Software\Classes\AxiomPreset\shell\open\command" "" `"$INSTDIR\${PRODUCT_EXECUTABLE}" "%1"`
+    System::Call 'Shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
+
     !insertmacro wails.writeUninstaller
 SectionEnd
 
@@ -106,6 +115,9 @@ Section "uninstall"
 
     Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
     Delete "$DESKTOP\${INFO_PRODUCTNAME}.lnk"
+
+    DeleteRegKey SHELL_CONTEXT "Software\Classes\.axproj"
+    DeleteRegKey SHELL_CONTEXT "Software\Classes\AxiomPreset"
 
     !insertmacro wails.unassociateFiles
     !insertmacro wails.unassociateCustomProtocols
